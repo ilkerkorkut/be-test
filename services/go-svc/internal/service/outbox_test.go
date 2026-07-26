@@ -14,7 +14,7 @@ func TestOutboxDispatcherPublishesAndMarksEvent(t *testing.T) {
 	if _, err := walletService.Credit(context.Background(), "user-1", 20, "DEPOSIT"); err != nil {
 		t.Fatalf("credit wallet: %v", err)
 	}
-	if _, err := NewBetService(db).Place(context.Background(), request.PlaceBetRequest{UserID: "user-1", EventID: "event-1", SportKey: "soccer_epl", Market: "h2h", Selection: "Home", Stake: 5, Odds: 2}); err != nil {
+	if _, err := NewBetService(db, fixedOddsLookup{price: 2}).Place(context.Background(), request.PlaceBetRequest{UserID: "user-1", EventID: "event-1", SportKey: "soccer_epl", Market: "h2h", Selection: "Home", Stake: 5, Odds: 2}); err != nil {
 		t.Fatalf("place bet: %v", err)
 	}
 

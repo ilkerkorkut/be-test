@@ -26,7 +26,7 @@ func dependencyInjection(
 		return nil, err
 	}
 	walletService := service.NewWalletService(db, logger)
-	betService := service.NewBetService(db, logger)
+	betService := service.NewBetService(db, sportsService, logger)
 	sportsHandler := handler.NewSportsHandler(sportsService)
 	eventsHandler := handler.NewEventsHandler(sportsService)
 	betsHandler := handler.NewBetsHandler(betService, authMiddleware)

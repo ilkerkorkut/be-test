@@ -40,11 +40,11 @@ export async function start(): Promise<void> {
   ]);
   logger.info({ users: users.length, notifications: seededNotifications.length }, "service data loaded");
   const userStore = new UserStore(users);
-  const notificationStore = new NotificationStore(seededNotifications);
+  const notificationStore = await NotificationStore.open(seededNotifications, resolve(dataDirectory(), "node-svc-notifications.json"));
   const notificationService = new NotificationService([
     new InAppNotificationAdapter(notificationStore),
     new EmailNotificationAdapter(notificationStore, new LogEmailTransport(logger)),
-  ], logger);
+  ], logger, notificationStore);
   const app = createApp({
     auth: new AuthenticationService(userStore, jwtSecret, process.env.SEEDED_USER_PIN ?? "1234"),
     notifications: notificationStore,
@@ -57,7 +57,13 @@ export async function start(): Promise<void> {
   let stopConsumer: (() => Promise<void>) | undefined;
   const brokers = process.env.KAFKA_BROKERS?.split(",").filter(Boolean) ?? [];
   if (brokers.length > 0) {
-    stopConsumer = await startBetSettledConsumer(brokers, notificationService, logger);
+    try {
+      stopConsumer = await startBetSettledConsumer(brokers, notificationService, logger);
+    } catch (error) {
+      logger.error({ err: error }, "kafka notification consumer failed to start");
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      throw error;
+    }
   } else {
     logger.warn("kafka notification consumer disabled because no brokers were configured");
   }

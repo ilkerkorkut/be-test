@@ -15,7 +15,7 @@ export class InAppNotificationAdapter implements NotificationAdapter {
   constructor(private readonly store: NotificationStore) {}
 
   async send(notification: Notification): Promise<void> {
-    this.store.save(notification);
+    await this.store.save(notification);
   }
 }
 
@@ -41,7 +41,7 @@ export class EmailNotificationAdapter implements NotificationAdapter {
 
   async send(notification: Notification): Promise<void> {
     await this.transport.send(notification);
-    this.store.save(notification);
+    await this.store.save(notification);
   }
 }
 
@@ -52,6 +52,7 @@ export class NotificationService {
   constructor(
     adapters: NotificationAdapter[],
     private readonly logger?: Logger,
+    private readonly store?: NotificationStore,
   ) {
     this.adapters = new Map(adapters.map((adapter) => [adapter.channel, adapter]));
   }
@@ -74,21 +75,32 @@ export class NotificationService {
   }
 
   async handleBetSettled(event: BetSettledEvent): Promise<void> {
-    if (this.processedEvents.has(event.eventId)) {
+    if (!this.store && this.processedEvents.has(event.eventId)) {
       this.logger?.debug({ event_id: event.eventId, bet_id: event.betId }, "duplicate bet settled event ignored");
       return;
     }
     this.logger?.info({ event_id: event.eventId, bet_id: event.betId, user_id: event.userId, status: event.status }, "processing bet settled notification");
 
     const won = event.status === "WON";
-    await this.send({
+    const notification = {
+      id: randomUUID(),
       userId: event.userId,
-      channel: "IN_APP",
+      channel: "IN_APP" as const,
       title: won ? "Big win!" : "Bet settled",
       body: won
         ? `Your bet ${event.betId} won ${event.payout.toFixed(2)}.`
         : `Your bet ${event.betId} has settled without a payout.`,
-    });
-    this.processedEvents.add(event.eventId);
+      readAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    if (this.store) {
+      if (!await this.store.saveSettled(event.eventId, notification)) {
+        this.logger?.debug({ event_id: event.eventId, bet_id: event.betId }, "duplicate bet settled event ignored");
+        return;
+      }
+    } else {
+      await this.send(notification);
+      this.processedEvents.add(event.eventId);
+    }
   }
 }

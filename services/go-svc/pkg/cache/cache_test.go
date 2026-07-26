@@ -1,10 +1,13 @@
 package cache
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCacheExpiresEntries(t *testing.T) {
@@ -47,6 +50,26 @@ func TestCacheGetOrLoadDeduplicatesParallelLoads(t *testing.T) {
 	}
 	if loads.Load() != 1 {
 		t.Fatalf("loader calls = %d, want 1", loads.Load())
+	}
+}
+
+func TestRedisCacheFallsBackWhenRedisIsUnavailable(t *testing.T) {
+	client := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1",
+		DialTimeout: 10 * time.Millisecond,
+		ReadTimeout: 10 * time.Millisecond,
+		MaxRetries:  0,
+	})
+	defer client.Close()
+
+	value, err := NewRedis[string](client, "test").GetOrLoad(context.Background(), "sports", time.Minute, func() (string, error) {
+		return "provider-value", nil
+	})
+	if err != nil {
+		t.Fatalf("load through unavailable redis: %v", err)
+	}
+	if value != "provider-value" {
+		t.Fatalf("value = %q, want provider-value", value)
 	}
 }
 

@@ -130,15 +130,19 @@ export function createApp(dependencies: AppDependencies) {
     })));
   });
 
-  app.post("/notifications/:id/read", requireUser, (request, response) => {
-    const userID = response.locals.userID as string;
-    if (!dependencies.notifications.markRead(userID, request.params.id, new Date().toISOString())) {
-      logger.warn({ request_id: response.locals.requestID, user_id: userID, notification_id: request.params.id }, "notification read rejected");
-      response.status(404).json({ error: "notification not found" });
-      return;
+  app.post("/notifications/:id/read", requireUser, async (request, response, next) => {
+    try {
+      const userID = response.locals.userID as string;
+      if (!await dependencies.notifications.markRead(userID, request.params.id, new Date().toISOString())) {
+        logger.warn({ request_id: response.locals.requestID, user_id: userID, notification_id: request.params.id }, "notification read rejected");
+        response.status(404).json({ error: "notification not found" });
+        return;
+      }
+      logger.info({ request_id: response.locals.requestID, user_id: userID, notification_id: request.params.id }, "notification marked read");
+      response.json({ ok: true });
+    } catch (error) {
+      next(error);
     }
-    logger.info({ request_id: response.locals.requestID, user_id: userID, notification_id: request.params.id }, "notification marked read");
-    response.json({ ok: true });
   });
 
   app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {

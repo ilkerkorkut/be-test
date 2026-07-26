@@ -23,17 +23,26 @@ type BetService interface {
 	Get(ctx context.Context, req request.GetBetsRequest) ([]response.BetHistoryResponse, error)
 }
 
+type OddsLookup interface {
+	GetOdds(ctx context.Context, req request.GetOddsRequest) (*response.OddsResponse, error)
+}
+
 type betService struct {
-	db     database.Store
-	logger *zap.Logger
+	db         database.Store
+	oddsLookup OddsLookup
+	logger     *zap.Logger
 }
 
-func NewBetService(db database.Store, loggers ...*zap.Logger) BetService {
-	return &betService{db: db, logger: serviceLogger(loggers)}
+func NewBetService(db database.Store, oddsLookup OddsLookup, loggers ...*zap.Logger) BetService {
+	return &betService{db: db, oddsLookup: oddsLookup, logger: serviceLogger(loggers)}
 }
 
-func (s *betService) Place(_ context.Context, req request.PlaceBetRequest) (*response.BetResponse, error) {
+func (s *betService) Place(ctx context.Context, req request.PlaceBetRequest) (*response.BetResponse, error) {
 	if err := validateBetRequest(req); err != nil {
+		return nil, err
+	}
+	authoritativeOdds, err := s.lookupOdds(ctx, req)
+	if err != nil {
 		return nil, err
 	}
 
@@ -51,7 +60,7 @@ func (s *betService) Place(_ context.Context, req request.PlaceBetRequest) (*res
 		Market:     req.Market,
 		Selection:  req.Selection,
 		StakeCents: stakeCents,
-		Odds:       req.Odds,
+		Odds:       authoritativeOdds,
 		Status:     enums.BetStatusPending,
 		PlacedAt:   now,
 	}
@@ -79,6 +88,31 @@ func (s *betService) Place(_ context.Context, req request.PlaceBetRequest) (*res
 	s.logger.Info("bet placed", zap.String("bet_id", bet.ID), zap.String("user_id", bet.UserID), zap.String("event_id", bet.EventID), zap.Int64("stake_cents", bet.StakeCents), zap.Float64("odds", bet.Odds))
 
 	return &response.BetResponse{BetID: bet.ID, Status: bet.Status}, nil
+}
+
+func (s *betService) lookupOdds(ctx context.Context, req request.PlaceBetRequest) (float64, error) {
+	if s.oddsLookup == nil {
+		return 0, errors.New("odds lookup is required")
+	}
+
+	odds, err := s.oddsLookup.GetOdds(ctx, request.GetOddsRequest{SportKey: req.SportKey, EventID: req.EventID})
+	if err != nil {
+		return 0, fmt.Errorf("get authoritative odds: %w", err)
+	}
+	for _, bookmaker := range odds.Bookmakers {
+		for _, market := range bookmaker.Markets {
+			if market.Key != req.Market {
+				continue
+			}
+			for _, outcome := range market.Outcomes {
+				if outcome.Name == req.Selection && outcome.Price > 1 && !math.IsNaN(outcome.Price) && !math.IsInf(outcome.Price, 0) {
+					return outcome.Price, nil
+				}
+			}
+		}
+	}
+
+	return 0, errors.New("requested market selection is no longer available")
 }
 
 func (s *betService) Get(_ context.Context, req request.GetBetsRequest) ([]response.BetHistoryResponse, error) {
@@ -117,10 +151,6 @@ func validateBetRequest(req request.PlaceBetRequest) error {
 	if _, err := toCents(req.Stake); err != nil {
 		return err
 	}
-	if req.Odds <= 1 || math.IsNaN(req.Odds) || math.IsInf(req.Odds, 0) {
-		return fmt.Errorf("odds must be greater than 1")
-	}
-
 	return nil
 }
 

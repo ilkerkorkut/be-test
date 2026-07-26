@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import jwt from "jsonwebtoken";
 
@@ -171,4 +174,29 @@ test("notification adapters dispatch each supported channel", async () => {
 
   assert.equal(store.listForUser(user.id, 10).length, 2);
   assert.deepEqual(sentEmails, ["Email"]);
+});
+
+test("notification state and processed settlement events survive a restart", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "node-svc-notifications-"));
+  context.after(async () => rm(directory, { recursive: true, force: true }));
+  const statePath = join(directory, "notifications.json");
+  const notification: Notification = {
+    id: "settlement-notification",
+    userId: user.id,
+    title: "Bet settled",
+    body: "Your bet settled.",
+    channel: "IN_APP",
+    readAt: null,
+    createdAt: "2026-01-03T00:00:00.000Z",
+  };
+
+  const firstStore = await NotificationStore.open([], statePath);
+  assert.equal(await firstStore.saveSettled("settlement-event", notification), true);
+  assert.equal(await firstStore.markRead(user.id, notification.id, "2026-01-03T01:00:00.000Z"), true);
+
+  const restartedStore = await NotificationStore.open([], statePath);
+  const [persisted] = restartedStore.listForUser(user.id, 10);
+  assert.equal(persisted.id, notification.id);
+  assert.equal(persisted.readAt, "2026-01-03T01:00:00.000Z");
+  assert.equal(await restartedStore.saveSettled("settlement-event", { ...notification, id: "duplicate" }), false);
 });
