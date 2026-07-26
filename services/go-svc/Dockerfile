@@ -1,13 +1,22 @@
-FROM golang:1.23-alpine AS build
-WORKDIR /app
-COPY go.mod ./
+FROM golang:1.25-alpine AS build
+WORKDIR /src/services/go-svc
+COPY services/go-svc/go.mod services/go-svc/go.sum ./
 RUN go mod download
-COPY . .
-RUN go build -o /go-svc .
+COPY services/go-svc ./
 
-FROM alpine:3.20
+FROM build AS api-build
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go-svc-api ./cmd/api
+
+FROM build AS worker-build
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go-svc-worker ./cmd/worker
+
+FROM alpine:3.20 AS api
 WORKDIR /app
-COPY --from=build /go-svc /app/go-svc
-COPY ../../data /app/data
+COPY --from=api-build /go-svc-api /app/go-svc-api
 EXPOSE 8081
-CMD ["/app/go-svc"]
+CMD ["/app/go-svc-api"]
+
+FROM alpine:3.20 AS worker
+WORKDIR /app
+COPY --from=worker-build /go-svc-worker /app/go-svc-worker
+CMD ["/app/go-svc-worker"]

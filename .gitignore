@@ -13,3 +13,8 @@ vendor/
 # Editor
 .idea/
 .vscode/
+
+AGENTS.md
+.codex
+data/go-svc.*
+graphify-out

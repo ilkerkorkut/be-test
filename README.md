@@ -128,7 +128,17 @@ The two services talk to each other over **HTTP** by default. If you prefer even
 
 When a bet is placed, simulate settlement: **30 seconds later** resolve with a 45% win chance. On a win, credit `stake * odds`.
 
-Implement however you like - goroutine, Node interval, internal cron, lightweight queue. State the choice in the README.
+Settlement is event-driven so a Kafka consumer never waits for those 30 seconds. The Go worker consumes
+`bets.placed.v1`, persists a durable settlement schedule due at `placedAt + 30 seconds`, and commits
+the placement message. A background scheduler dispatches one `bets.settlement.requested.v1` outbox
+event only when due. A separate consumer group consumes that event and performs the existing atomic
+JSON-store settlement transaction. That transaction updates the bet, credits a winning wallet, records
+the ledger entry, and writes `bets.settled.v1` to the outbox together. The Node service consumes the
+last topic to create the notification.
+
+The outbox makes delivery at-least-once. `bets.settlement.requested.v1` uses the deterministic event
+ID `settlement-requested-<bet ID>`, while the settlement transaction records that ID in
+`processedEvents`; duplicate Kafka deliveries therefore cannot settle or credit a bet twice.
 
 ---
 
